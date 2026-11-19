@@ -1,0 +1,222 @@
+name: Build APK (todo en uno)
+on:
+  push:
+  workflow_dispatch:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Generar proyecto completo
+        run: |
+          set -e
+          mkdir -p "$RUNNER_TEMP/proj" && cd "$RUNNER_TEMP/proj"
+          mkdir -p app/src/main/java/com/example/m45control app/src/main/res/layout app/src/main/res/drawable app/src/main/res/values
+
+          cat > settings.gradle.kts <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name = "M45Control"
+          include(":app")
+          EOF
+
+          cat > build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application") version "8.5.2" apply false
+              id("org.jetbrains.kotlin.android") version "1.9.24" apply false
+          }
+          EOF
+
+          cat > gradle.properties <<'EOF'
+          org.gradle.jvmargs=-Xmx2g
+          android.useAndroidX=false
+          EOF
+
+          printf 'build/\n.gradle/\nlocal.properties\n*.iml\n.idea/\n' > .gitignore
+
+          cat > app/build.gradle.kts <<'EOF'
+          plugins {
+              id("com.android.application")
+              id("org.jetbrains.kotlin.android")
+          }
+          android {
+              namespace = "com.example.m45control"
+              compileSdk = 34
+              defaultConfig {
+                  applicationId = "com.example.m45control"
+                  minSdk = 26
+                  targetSdk = 34
+                  versionCode = 1
+                  versionName = "1.0"
+              }
+              compileOptions {
+                  sourceCompatibility = JavaVersion.VERSION_17
+                  targetCompatibility = JavaVersion.VERSION_17
+              }
+              kotlinOptions { jvmTarget = "17" }
+          }
+          EOF
+
+          cat > app/src/main/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <uses-permission android:name="android.permission.VIBRATE"/>
+              <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS"/>
+              <application android:label="M45 Control" android:theme="@style/AppTheme">
+                  <activity android:name=".MainActivity" android:exported="true">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN"/>
+                          <category android:name="android.intent.category.LAUNCHER"/>
+                      </intent-filter>
+                  </activity>
+              </application>
+          </manifest>
+          EOF
+
+          cat > app/src/main/res/values/themes.xml <<'EOF'
+          <resources>
+              <style name="AppTheme" parent="android:Theme.Material.NoActionBar">
+                  <item name="android:windowBackground">#1E1E2A</item>
+              </style>
+              <style name="Btn">
+                  <item name="android:layout_width">match_parent</item>
+                  <item name="android:layout_height">80dp</item>
+                  <item name="android:layout_marginBottom">14dp</item>
+                  <item name="android:textColor">#FFFFFF</item>
+                  <item name="android:textSize">18sp</item>
+                  <item name="android:textStyle">bold</item>
+                  <item name="android:stateListAnimator">@null</item>
+              </style>
+          </resources>
+          EOF
+
+          mk() {
+          cat > app/src/main/res/drawable/btn_$1.xml <<EOF
+          <selector xmlns:android="http://schemas.android.com/apk/res/android">
+            <item android:state_pressed="true">
+              <layer-list>
+                <item android:top="6dp"><shape><corners android:radius="18dp"/><solid android:color="$3"/></shape></item>
+                <item android:top="4dp" android:bottom="2dp"><shape><corners android:radius="18dp"/><solid android:color="$2"/></shape></item>
+              </layer-list>
+            </item>
+            <item>
+              <layer-list>
+                <item android:top="6dp"><shape><corners android:radius="18dp"/><solid android:color="$3"/></shape></item>
+                <item android:bottom="6dp"><shape><corners android:radius="18dp"/><solid android:color="$2"/></shape></item>
+              </layer-list>
+            </item>
+          </selector>
+          EOF
+          }
+          mk green  "#4CAF50" "#1B5E20"
+          mk red    "#F44336" "#B71C1C"
+          mk blue   "#2196F3" "#0D47A1"
+          mk purple "#AB47BC" "#4A148C"
+
+          cat > app/src/main/res/layout/activity_main.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+              android:layout_width="match_parent" android:layout_height="match_parent"
+              android:orientation="vertical" android:padding="24dp" android:gravity="center">
+
+              <TextView android:id="@+id/estado" android:layout_width="wrap_content"
+                  android:layout_height="wrap_content" android:text="Modo: Música"
+                  android:textColor="#FFFFFF" android:textSize="20sp" android:layout_marginBottom="24dp"/>
+
+              <Button android:id="@+id/btnSubir" style="@style/Btn" android:background="@drawable/btn_green" android:text="Volumen +"/>
+              <Button android:id="@+id/btnBajar" style="@style/Btn" android:background="@drawable/btn_red" android:text="Volumen −"/>
+              <Button android:id="@+id/btnPower" style="@style/Btn" android:background="@drawable/btn_blue" android:text="Encender / Apagar (Bluetooth)"/>
+              <Button android:id="@+id/btnModo" style="@style/Btn" android:background="@drawable/btn_purple" android:text="Cambiar Gamer / Música"/>
+          </LinearLayout>
+          EOF
+
+          cat > app/src/main/java/com/example/m45control/MainActivity.kt <<'EOF'
+          package com.example.m45control
+
+          import android.app.Activity
+          import android.content.Intent
+          import android.media.AudioManager
+          import android.media.audiofx.Equalizer
+          import android.os.Bundle
+          import android.os.VibrationEffect
+          import android.os.Vibrator
+          import android.provider.Settings
+          import android.widget.Button
+          import android.widget.TextView
+          import android.widget.Toast
+
+          class MainActivity : Activity() {
+              private lateinit var audio: AudioManager
+              private lateinit var vib: Vibrator
+              private var eq: Equalizer? = null
+              private var gamer = false
+
+              private fun vibrar() =
+                  vib.vibrate(VibrationEffect.createOneShot(30, VibrationEffect.DEFAULT_AMPLITUDE))
+
+              private fun volumen(dir: Int) {
+                  audio.adjustStreamVolume(AudioManager.STREAM_MUSIC, dir, AudioManager.FLAG_SHOW_UI)
+                  vibrar()
+              }
+
+              private fun aplicarModo() {
+                  try {
+                      val e = eq ?: Equalizer(0, 0).also { it.enabled = true; eq = it }
+                      val r = e.bandLevelRange
+                      val n = e.numberOfBands.toInt()
+                      for (b in 0 until n) {
+                          val nivel = when {
+                              gamer && b >= n - 2 -> r[1] / 2
+                              gamer && b == 0 -> r[0] / 2
+                              !gamer && b <= 1 -> r[1] / 2
+                              else -> 0
+                          }
+                          e.setBandLevel(b.toShort(), nivel.toShort())
+                      }
+                  } catch (ex: Exception) {
+                      Toast.makeText(this, "Tu dispositivo no permite el ecualizador global", Toast.LENGTH_LONG).show()
+                  }
+              }
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+                  super.onCreate(savedInstanceState)
+                  setContentView(R.layout.activity_main)
+                  audio = getSystemService(AUDIO_SERVICE) as AudioManager
+                  vib = getSystemService(VIBRATOR_SERVICE) as Vibrator
+                  val estado = findViewById<TextView>(R.id.estado)
+
+                  findViewById<Button>(R.id.btnSubir).setOnClickListener { volumen(AudioManager.ADJUST_RAISE) }
+                  findViewById<Button>(R.id.btnBajar).setOnClickListener { volumen(AudioManager.ADJUST_LOWER) }
+                  findViewById<Button>(R.id.btnPower).setOnClickListener {
+                      vibrar()
+                      startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS))
+                  }
+                  findViewById<Button>(R.id.btnModo).setOnClickListener {
+                      vibrar()
+                      gamer = !gamer
+                      estado.text = if (gamer) "Modo: Gamer" else "Modo: Música"
+                      aplicarModo()
+                  }
+              }
+
+              override fun onDestroy() { eq?.release(); super.onDestroy() }
+          }
+          EOF
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: 8.7
+      - name: Compilar APK
+        working-directory: ${{ runner.temp }}/proj
+        run: gradle assembleDebug --no-daemon
+      - uses: actions/upload-artifact@v4
+        with:
+          name: M45Control-apk
+          path: ${{ runner.temp }}/proj/app/build/outputs/apk/debug/*.apk
